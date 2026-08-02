@@ -1,0 +1,33 @@
+# local agent / editor
+.agent-canary/
+.claude/
+.code-review-graph/
+.mcp.json
+CLAUDE.md
+
+# secrets and planted canaries
+secrets/
+exports/
+results/
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+uv.lock
+*.log
+
+# os
+.DS_Store
+Thumbs.db
+desktop.ini
