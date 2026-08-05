@@ -1,4 +1,4 @@
-# Agent Trap Lab
+# Agent Trap Lab
 
 ![agent-trap-lab banner](banner.jpg)
 
@@ -6,7 +6,7 @@ Lab for evaluating AI web-browsing agents under adversarial pages. Implements at
 
 ## What it does
 
-Deploys 29 trap pages across 5 attack categories. Runs an LLM agent twice (naive baseline vs StegOFF-defended). Emits a coverage matrix of which attacks succeed and which StegOFF blocks.
+Deploys 45+ trap pages across 7 attack categories. Runs an LLM agent twice (naive baseline vs StegOFF-defended). Emits a coverage matrix of which attacks succeed and which StegOFF blocks.
 
 ## Attack Categories
 
@@ -15,6 +15,8 @@ Deploys 29 trap pages across 5 attack categories. Runs an LLM agent twice (naive
 | **Content Injection** (8) | CSS hiding, comments, aria-labels, meta tags, dynamic cloaking | Hidden instructions in HTML that naive agents extract and follow |
 | **Semantic Manipulation** (5) | Biased framing, authority priming, lost-in-middle, critic evasion, anchoring | Subtle reasoning bias without explicit injection |
 | **Behavioral Control** (5) | Jailbreak, exfiltration, sub-agent spawning, tool hijack, confused deputy | Direct behavioral override attempts |
+| **Agent Coercion** (8) | Tool-schema forge, CrewAI spawn, web_search exfil, SSRF web_fetch, LlamaIndex RAG override, ExecuteCode, Finbot privilege, tool-result forge | Coerce tool-using / multi-agent stacks |
+| **Git Coercion** (8) | Submodule clone, githooks, GH Actions secrets dump, README install, credential helper, LFS smudge, SSH redirect, PR force-push | Coerce coding agents into unsafe git/hook/CI/secret actions |
 | **Cognitive State** (3) | RAG poisoning, memory poisoning, few-shot poisoning | Persistent context corruption via fabricated standards and insecure code examples |
 | **Compositional** (7) | Distributed jailbreak fragments, distributed exfiltration | Attack spread across multiple pages, each benign individually |
 
@@ -55,28 +57,28 @@ Persistent gap: semantic attacks (authority priming, RAG poisoning, few-shot poi
 ```bash
 pip install -e .
 
-# Start the trap server
+# Start the trap server
 
 ![agent-trap-lab banner](banner.jpg)
 python lab.py serve
 
-# In another terminal: run both baseline and defended, compare results
+# In another terminal: run both baseline and defended, compare results
 
 ![agent-trap-lab banner](banner.jpg)
 python lab.py run --compare
 
-# Or run modes separately
+# Or run modes separately
 
 ![agent-trap-lab banner](banner.jpg)
 python lab.py run --no-defended # baseline (naive agent)
 python lab.py run --defended # defended (StegOFF enabled)
 
-# View latest coverage report
+# View latest coverage report
 
 ![agent-trap-lab banner](banner.jpg)
 python lab.py coverage
 
-# Scan a single URL for hidden traps
+# Scan a single URL for hidden traps
 
 ![agent-trap-lab banner](banner.jpg)
 python lab.py scan http://localhost:8080/trap/ci/css-display-none
@@ -88,10 +90,12 @@ Requires Ollama running with a model loaded (default: `qwen3.5:9b` on `http://12
 
 ```
 traps/
- server.py Flask server (port 8080), 29 trap routes + exfil honeypot
+ server.py Flask server (port 8080), 37+ trap routes + exfil honeypot
  content_injection.py 8 CSS/HTML hiding techniques
  semantic_manipulation.py 5 reasoning bias attacks
  behavioral_control.py 5 direct behavioral overrides
+ agent_coercion.py 8 tool/multi-agent/web-search coercion pages
+ git_coercion.py 8 git/hooks/CI/credential coercion pages
  cognitive_state.py 3 persistent context corruption attacks
  compositional.py Distributed multi-page attack fragments
 
@@ -109,8 +113,22 @@ agent/
  coverage.py Baseline vs defended comparison matrix
 
 lab.py CLI (serve, run, scan, analyze, report, coverage)
-tests/ 45 tests covering all detector layers
+tests/ detector + agent-coercion offline suites
 ```
+
+## Agent coercion quick test
+
+```bash
+# Offline (no model)
+pytest tests/test_agent_coercion.py -q
+
+# Live: serve + coerce subset (needs Ollama)
+python lab.py serve
+# other terminal:
+python -c "from agent.runner import build_default_tasks, run_task; tasks=[t for t in build_default_tasks() if t.category=='agent_coercion'];
+[print(t.trap_id, run_task(t).agent_response[:200]) for t in tasks[:3]]"
+```
+
 
 ## Coverage matrix output
 

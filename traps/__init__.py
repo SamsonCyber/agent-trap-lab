@@ -7,4 +7,12 @@ TRAP_CATEGORIES = {
     "behavioral_control": "Embedded jailbreaks and data exfiltration triggers",
     "compositional": "Split payloads across multiple benign-looking sources",
     "exfiltration": "Confused-deputy attacks coercing agents to leak data",
+    "agent_coercion": (
+        "Tool-using / multi-agent / web-search coercion "
+        "(LangChain, CrewAI, LlamaIndex, Finbot-class agents)"
+    ),
+    "git_coercion": (
+        "Git/VCS surface coercion: clone/submodule, hooks, Actions, "
+        "credential helper, LFS filters, SSH redirect, PR force-push"
+    ),
 }

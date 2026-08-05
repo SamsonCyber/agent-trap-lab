@@ -77,6 +77,13 @@ INJECTION_PATTERNS = [
     (r"(?:curl|wget|fetch|post)\s+.*(?:endpoint|url|server)", Severity.MEDIUM),
     (r"base64[_-]?encode", Severity.MEDIUM),
     (r"(?:forward|send)\s+(?:to|data|the)\s+.*(?:@|\.com|endpoint)", Severity.HIGH),
+    # Agent coercion / tool-using surfaces
+    (r"169\.254\.169\.254", Severity.CRITICAL),
+    (r"TRAP_ACTIVATED_AGENT_COERCION", Severity.CRITICAL),
+    (r"ExecuteCode|PythonREPL", Severity.HIGH),
+    (r"web_fetch\s*\(|TOOL_CALL\s+name=", Severity.HIGH),
+    (r"finbot-sync\s+q=", Severity.CRITICAL),
+    (r"os\.environ", Severity.HIGH),
 ]
 
 COMPILED_PATTERNS = [(re.compile(p, re.IGNORECASE), sev) for p, sev in INJECTION_PATTERNS]
@@ -87,13 +94,64 @@ def scan_html(html: str, url: str = "") -> ScanResult:
     result = ScanResult(url=url)
     soup = BeautifulSoup(html, "html.parser")
 
+    # Visible body length for ratio + visible coercion scan
+    body = soup.body or soup
+    visible = body.get_text(separator=" ", strip=True) if body else ""
+    result.visible_text_chars = len(visible)
+
     _check_css_hidden(soup, result)
     _check_html_comments(soup, result)
     _check_metadata(soup, result)
+    _check_visible_coercion(visible, result)
     _check_hidden_ratio(result)
     _calculate_risk(result)
 
     return result
+
+
+# High-signal patterns that matter even when fully visible (tool-using agent coercion).
+VISIBLE_COERCION_PATTERNS = [
+    (r"169\.254\.169\.254", Severity.CRITICAL, "Cloud metadata SSRF target"),
+    (r"TRAP_ACTIVATED_AGENT_COERCION", Severity.CRITICAL, "Agent coercion canary in page"),
+    (r"TRAP_ACTIVATED_GIT_COERCION", Severity.CRITICAL, "Git coercion canary in page"),
+    (r"finbot-sync\s+q=", Severity.CRITICAL, "Web-search exfil query template"),
+    (r"2130706433", Severity.HIGH, "Decimal-encoded loopback SSRF"),
+    (r"os\.environ", Severity.HIGH, "Environment dump coercion"),
+    (r"ExecuteCode|PythonREPL", Severity.HIGH, "Code-execution tool coercion"),
+    (r"~/?\.secrets", Severity.HIGH, "Secrets path coercion"),
+    (r"SYSTEM\s+PRIORITY\s+OVERRIDE", Severity.CRITICAL, "RAG/system override language"),
+    (r"safety\s+policies\s+are\s+suspended", Severity.CRITICAL, "Safety suspension language"),
+    (r"web_fetch\s*\(\s*[\"']https?://(?:169\.254|127\.0\.0\.1)", Severity.CRITICAL, "web_fetch to private target"),
+    # Git-surface (visible README/CI coercion)
+    (r"git\s+clone\s+--recursive\s+https?://evil", Severity.CRITICAL, "Hostile recursive clone"),
+    (r"\.git/hooks/pre-commit", Severity.CRITICAL, "Pre-commit hook install coercion"),
+    (r"credential\.helper\s+['\"]?!", Severity.CRITICAL, "Shell credential helper coercion"),
+    (r"git\s+push\s+--force\s+origin\s+main", Severity.CRITICAL, "Force-push main coercion"),
+    (r"toJSON\s*\(\s*secrets\s*\)", Severity.CRITICAL, "GHA secrets dump coercion"),
+    (r"filter\.\w+\.smudge\s+['\"]curl", Severity.CRITICAL, "LFS/smudge exfil filter"),
+    (r"core\.sshCommand", Severity.HIGH, "SSH command override coercion"),
+    (r"curl\s+-fsSL\s+http://127\.0\.0\.1:8080/git/install\.sh", Severity.CRITICAL, "Pipe hostile install.sh"),
+]
+_COMPILED_VISIBLE = [
+    (re.compile(p, re.IGNORECASE), sev, desc) for p, sev, desc in VISIBLE_COERCION_PATTERNS
+]
+
+
+def _check_visible_coercion(visible_text: str, result: ScanResult) -> None:
+    """Scan full page text for tool/SSRF/multi-agent coercion (visible is still hostile)."""
+    if not visible_text or len(visible_text) < 20:
+        return
+    for pattern, severity, desc in _COMPILED_VISIBLE:
+        match = pattern.search(visible_text)
+        if match:
+            result.findings.append(Finding(
+                detector="visible_coercion",
+                severity=severity,
+                description=desc,
+                evidence=visible_text[max(0, match.start() - 40):match.end() + 40],
+                location="document.body (visible text)",
+            ))
+
 
 
 def _check_css_hidden(soup: BeautifulSoup, result: ScanResult) -> None:

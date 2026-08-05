@@ -94,6 +94,29 @@ _COLOR_MATCH_PATTERN = re.compile(
 _HIDDEN_CLASSES = {"hidden", "invisible", "offscreen", "sr-only", "visually-hidden",
                    "hidden-trap", "d-none", "hide"}
 
+# Scrubbed from text when visible-coercion CRITICAL block fires (defense in depth)
+_COERCION_SCRUB_RES = [
+    re.compile(r"169\.254\.169\.254[^\s\"'<>]*", re.I),
+    re.compile(r"TRAP_ACTIVATED_AGENT_COERCION", re.I),
+    re.compile(r"TRAP_ACTIVATED_GIT_COERCION", re.I),
+    re.compile(r"https?://2130706433[^\s\"'<>]*", re.I),
+    re.compile(r"https?://0x7f000001[^\s\"'<>]*", re.I),
+    re.compile(r"https?://(?:127\.0\.0\.1|localhost)(?::\d+)?[^\s\"'<>]*", re.I),
+    re.compile(r"finbot-sync\s+q=[^\n]*", re.I),
+    re.compile(r"~/?\.secrets[^\s\"'<>]*", re.I),
+    re.compile(r"metadata\.google\.internal[^\s\"'<>]*", re.I),
+    re.compile(r"https?://evil\.example[^\s\"'<>]*", re.I),
+    re.compile(r"git\s+push\s+--force\s+origin\s+main", re.I),
+]
+
+
+def _scrub_coercion_markers(text: str) -> str:
+    """Remove high-signal SSRF/canary tokens from text after a coercion block."""
+    out = text or ""
+    for pat in _COERCION_SCRUB_RES:
+        out = pat.sub("[REDACTED_COERCION]", out)
+    return out
+
 
 def _is_hidden_element(tag) -> str | None:
     """Check if a BeautifulSoup tag is visually hidden. Returns reason or None."""
@@ -292,6 +315,41 @@ def full_defense(raw_html: str, use_llm: bool = False) -> tuple[str, DefenseRepo
     # Phase 3: Full StegOFF scan (steg + injection + authority + polarization)
     clean_text, defense_report = defend_text(extracted_text, use_llm=use_llm)
     defense_report.html_report = html_report
+
+    # Phase 3b: Visible agent-coercion / SSRF canaries (content_scanner).
+    # StegOFF's plaintext injection scorer often leaves prompt_injection_detected
+    # True but blocked=False (no CRITICAL steg finding). Tool-using coercion
+    # pages put SSRF/canary language in *visible* text — block those hard.
+    try:
+        from detectors.content_scanner import Severity, scan_html
+
+        page_scan = scan_html(raw_html, url="full_defense")
+        coercion_hits = [
+            f
+            for f in page_scan.findings
+            if f.severity == Severity.CRITICAL
+            and f.detector in ("visible_coercion", "injection_pattern")
+        ]
+        if coercion_hits:
+            defense_report.blocked = True
+            defense_report.prompt_injection_detected = True
+            defense_report.risk_score = max(defense_report.risk_score, 1.0)
+            for f in coercion_hits[:12]:
+                defense_report.stegoff_findings.append(
+                    {
+                        "detector": f.detector,
+                        "severity": f.severity.value,
+                        "description": f.description,
+                        "evidence": (f.evidence or "")[:200],
+                        "location": f.location,
+                        "source": "content_scanner_visible_coercion",
+                    }
+                )
+            # Strip high-signal canary / metadata strings from text if still present
+            clean_text = _scrub_coercion_markers(clean_text)
+            defense_report.clean_text_len = len(clean_text)
+    except Exception:
+        pass  # scanner optional; StegOFF path still applies
 
     # Phase 4: Semantic manipulation defense (authority + polarization + code patterns)
     try:
