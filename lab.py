@@ -24,23 +24,37 @@ from rich.text import Text
 console = Console()
 
 
-@click.group()
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"]},
+    epilog=(
+        "Examples:\n"
+        "  traplab --help\n"
+        "  traplab serve --port 8080\n"
+        "  traplab scan http://127.0.0.1:8080/traps/hidden-css\n"
+        "  traplab coverage\n"
+        "\n"
+        "Primary offline path: traplab --help / traplab coverage (no model required).\n"
+        "run/serve need local trap server and optional Ollama."
+    ),
+)
 def cli():
-    """Agent Trap Lab — AI agent trap simulator and detector."""
+    """Agent Trap Lab - AI agent trap simulator and detector."""
     pass
 
 
 @cli.command()
 @click.option("--port", default=8080, help="Server port")
 @click.option("--host", default="0.0.0.0", help="Server host")
-def serve(port: int, host: str):
+@click.option("--debug/--no-debug", default=False, help="Flask debug + reloader (off for stable lab runs)")
+def serve(port: int, host: str, debug: bool):
     """Start the trap server."""
     from traps.server import app
     console.print(f"[bold green]Starting trap server on {host}:{port}[/]")
-    console.print("Trap index: http://localhost:{port}/")
-    console.print("Honeypot:   http://localhost:{port}/collect")
-    console.print("Exfil log:  http://localhost:{port}/exfil-log")
-    app.run(host=host, port=port, debug=True)
+    console.print(f"Trap index: http://{host}:{port}/")
+    console.print(f"Honeypot:   http://{host}:{port}/collect")
+    console.print(f"Exfil log:  http://{host}:{port}/exfil-log")
+    # use_reloader=False: Windows watchdog restarts drop in-flight agent runs
+    app.run(host=host, port=port, debug=debug, use_reloader=False)
 
 
 def _analyze_results(results, output_path: Path, label: str, check_consistency: bool = True) -> list[dict]:
@@ -163,17 +177,25 @@ def _analyze_results(results, output_path: Path, label: str, check_consistency: 
 @click.option("--output", default="results", help="Output directory")
 @click.option("--defended/--no-defended", default=False, help="Enable StegOFF defense layer")
 @click.option("--compare", is_flag=True, help="Run both baseline and defended, then compare")
-def run(base_url: str, model: str, output: str, defended: bool, compare: bool):
+@click.option(
+    "--category",
+    multiple=True,
+    help="Limit to category (repeatable). e.g. --category agent_coercion",
+)
+def run(base_url: str, model: str, output: str, defended: bool, compare: bool, category: tuple[str, ...]):
     """Run all traps against the test agent and analyze results."""
     from agent.runner import run_all_tasks
 
     output_path = Path(output)
+    categories = list(category) if category else None
+    cat_label = ",".join(categories) if categories else "all"
 
     if compare:
         console.print(Panel(
             f"[bold]Agent Trap Lab — Comparison Run[/]\n"
             f"Server: {base_url}\n"
             f"Model: {model}\n"
+            f"Categories: {cat_label}\n"
             f"Mode: BASELINE vs DEFENDED (StegOFF)",
             title="Configuration",
         ))
@@ -181,12 +203,14 @@ def run(base_url: str, model: str, output: str, defended: bool, compare: bool):
         # Phase 1: Baseline run
         console.print("\n[bold cyan]Phase 1a: Baseline run (no defense)...[/]")
         baseline_results = run_all_tasks(base_url=base_url, model=model,
-                                         output_dir=output, defended=False)
+                                         output_dir=output, defended=False,
+                                         categories=categories)
 
         # Phase 1b: Defended run
         console.print("\n[bold cyan]Phase 1b: Defended run (StegOFF enabled)...[/]")
         defended_results = run_all_tasks(base_url=base_url, model=model,
-                                          output_dir=output, defended=True)
+                                          output_dir=output, defended=True,
+                                          categories=categories)
 
         # Phase 2: Analyze both
         console.print("\n[bold cyan]Phase 2: Analyzing results...[/]")
@@ -218,7 +242,8 @@ def run(base_url: str, model: str, output: str, defended: bool, compare: bool):
 
         console.print(f"\n[bold cyan]Phase 1: Running agent through trap pages ({mode_label})...[/]")
         results = run_all_tasks(base_url=base_url, model=model,
-                                output_dir=output, defended=defended)
+                                output_dir=output, defended=defended,
+                                categories=categories)
 
         console.print("\n[bold cyan]Phase 2: Analyzing agent responses...[/]")
         label = "defended" if defended else "baseline"
